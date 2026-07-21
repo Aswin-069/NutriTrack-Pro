@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;550;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Strict grayscales with premium high-contrast values */
+  --c-bg: #000000;
+  --c-fg: #ffffff;
+  --c-border: #18181b;     /* zinc-900 */
+  --c-muted: #71717a;      /* zinc-500 */
+  --c-subtle: #27272a;     /* zinc-800 */
+  --c-surface: #09090b;    /* zinc-950 */
+}
+
+body {
+  margin: 0;
+  background-color: var(--c-bg);
+  color: var(--c-fg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono {
+  font-family: 'Space Mono', monospace;
+}
+
+.font-sans {
+  font-family: 'Inter', sans-serif;
+}
+
+/* Sharp, deliberate hairline divider */
+.divider {
+  height: 1px;
+  background-color: var(--c-border);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-subtle);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-muted);
+}
+
+
+/* Header/Display styling utility */
+h1, h2, h3, h4, .font-display {
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Hairline borders & premium textures */
+.border-hairline {
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+
+.border-hairline-hover:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.panel-glass {
+  background: rgba(15, 15, 18, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 0.5px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+}
+
+.panel-glass-hover:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(20, 20, 25, 0.85);
+}
+
+/* Premium micro-interactions transition speed */
+.transition-premium {
+  transition: all 400ms var(--ease-out-expo);
+}
+
+/* Inputs & focus styles */
+input, select, textarea {
+  outline: none;
+  font-family: 'Inter', monospace;
+  border-radius: 14px;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--n-0) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* Hide number input spin buttons across all browsers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Skeleton Screens shimmer animation */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-pulse {
+  background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.03) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite linear;
+  border-radius: 14px;
+}
+
+/* Scrollbar adjustment */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--n-12);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--n-9);
+  border-radius: 9px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--n-6);
+}
+
+/* Subtle dot grid mesh background */
+.mesh-bg {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+@keyframes mesh-pulse {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.ambient-mesh {
+  background: radial-gradient(circle at 50% 50%, rgba(25, 25, 35, 0.3) 0%, rgba(0, 0, 0, 1) 100%),
+              radial-gradient(circle at 15% 25%, rgba(255, 255, 255, 0.05) 0%, transparent 45%),
+              radial-gradient(circle at 85% 75%, rgba(255, 255, 255, 0.03) 0%, transparent 45%);
+  background-size: 200% 200%;
+  animation: mesh-pulse 20s infinite ease-in-out;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}

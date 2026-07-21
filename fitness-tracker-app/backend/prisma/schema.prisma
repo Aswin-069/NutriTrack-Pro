@@ -1,0 +1,72 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                   Int       @id @default(autoincrement())
+  name                 String
+  email                String    @unique
+  passwordHash         String
+  height               Float
+  weight               Float
+  age                  Int
+  gender               String
+  fitnessGoal          String
+  activityLevel        String
+  dailyCalorieTarget   Int
+  dailyProteinTarget   Int
+  failedLoginAttempts  Int       @default(0)
+  lockoutUntil         DateTime?
+  otpHash              String?
+  otpExpires           DateTime?
+  otpAttempts          Int       @default(0)
+  otpLockoutUntil      DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  foodLogs             FoodLog[]
+}
+
+model FoodLog {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date           String   // stored as 'YYYY-MM-DD'
+  mealSlot       String   // 'breakfast', 'lunch', 'pre_workout', 'post_workout', 'dinner'
+  foodName       String
+  quantity       Float
+  unit           String
+  calories       Float
+  protein        Float
+  carbs          Float
+  fat            Float
+  gramEquivalent Float?   // stores resolved grams for macro math
+  createdAt      DateTime @default(now())
+}
+
+model Food {
+  id            Int      @id @default(autoincrement())
+  name          String
+  displayName   String?  // clean, human-readable name
+  category      String?
+  cuisineRegion String?  // e.g. 'South Indian', 'North Indian', 'Punjabi', 'Gujarati', 'Bengali', 'Pan-Indian', 'Global'
+  servingSize   Float    // canonical serving quantity (e.g. 100)
+  servingUnit   String   // 'g', 'ml', 'piece', 'scoop', 'cup'
+  pieceWeight   Float?   // average gram weight per piece if countable
+  calories      Float
+  protein       Float
+  carbs         Float
+  fat           Float
+  fiber         Float    @default(0)
+  sourceType    String   // 'FDC' | 'OFF' | 'COMPOSITE' | 'CUSTOM'
+  sourceId      String   // FDC fdcId, OFF product id, or composite dish slug
+  dataQuality   String   @default("VERIFIED_FDC") // 'VERIFIED_FDC' | 'VERIFIED_OFF' | 'COMPOSITE_ESTIMATED'
+  createdAt     DateTime @default(now())
+
+  @@unique([sourceType, sourceId])
+  @@index([name])
+}
