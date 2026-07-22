@@ -30,7 +30,21 @@ export const verifyCsrf = (req, res, next) => {
     return next();
   }
 
-  // Authorization Bearer token header or X-CSRF-Token custom header satisfies cross-origin security
+  // Public unauthenticated authentication endpoints do not use ambient cookie sessions
+  const publicAuthRoutes = [
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/send-otp',
+    '/api/auth/verify-otp',
+    '/api/auth/reset-password-otp'
+  ];
+
+  const path = req.path || req.originalUrl || '';
+  if (publicAuthRoutes.some(route => path.includes(route))) {
+    return next();
+  }
+
+  // Authorization Bearer token header satisfies cross-origin security
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     return next();
   }
@@ -38,7 +52,7 @@ export const verifyCsrf = (req, res, next) => {
   const cookieToken = req.cookies?.csrfToken;
   const headerToken = req.headers['x-csrf-token'];
 
-  if (headerToken || (cookieToken && cookieToken === headerToken)) {
+  if ((headerToken && headerToken.trim() !== '') || (cookieToken && cookieToken === headerToken)) {
     return next();
   }
 
