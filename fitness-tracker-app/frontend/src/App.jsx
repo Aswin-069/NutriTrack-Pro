@@ -38,6 +38,44 @@ function getCsrfToken() {
   return '';
 }
 
+// Base API URL configuration
+// Uses VITE_API_URL if defined in environment, defaults to empty string for relative proxying in dev
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+// Get stored Auth Token
+function getAuthToken() {
+  return localStorage.getItem('nutritrack_token') || '';
+}
+
+// Store Auth Token
+function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem('nutritrack_token', token);
+  } else {
+    localStorage.removeItem('nutritrack_token');
+  }
+}
+
+// Unified API fetch helper supporting environment API_BASE_URL, bearer token, and CSRF token
+async function apiFetch(endpoint, options = {}) {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+  const token = getAuthToken();
+  const csrf = getCsrfToken();
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+    ...(options.headers || {})
+  };
+
+  return fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers
+  });
+}
+
 // Calculate password strength score (0 to 4)
 function getPasswordStrength(pwd) {
   if (!pwd) return 0;
@@ -1954,7 +1992,7 @@ function HistoryPage({ user }) {
 
   useEffect(() => {
     setHistoryLoading(true);
-    fetch('/api/logs')
+    apiFetch('/api/logs')
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
@@ -2106,12 +2144,8 @@ function ProfilePage({ user, setUser, handleLogout, showToast }) {
 
     setSaving(true);
     try {
-      const res = await fetch('/api/auth/profile', {
+      const res = await apiFetch('/api/auth/profile', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ height, weight, age, gender, fitnessGoal, activityLevel })
       });
       const data = await res.json();
@@ -2263,7 +2297,7 @@ function AppContent() {
     if (!date) return;
     setLogsLoading(true);
     try {
-      const res = await fetch(`/api/logs?date=${date}`);
+      const res = await apiFetch(`/api/logs?date=${date}`);
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs || []);
@@ -2346,17 +2380,19 @@ function AppContent() {
   const regPasswordStrength = useMemo(() => getPasswordStrength(regPassword), [regPassword]);
   const resetPasswordStrength = useMemo(() => getPasswordStrength(resetPasswordVal), [resetPasswordVal]);
 
-  // Fetch user profile on mount with 6-second timeout & fail-safe fallback
+  // Fetch user profile on mount with 30-second timeout for cloud cold-starts
   useEffect(() => {
     let isMounted = true;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
-    }, 6000);
+    }, 30000);
 
     const checkAuthStatus = async () => {
+      const authPaths = ['/login', '/register', '/welcome'];
+
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await apiFetch('/api/auth/me', {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -2366,7 +2402,6 @@ function AppContent() {
         } else {
           if (isMounted) {
             setUser(null);
-            const authPaths = ['/login', '/register', '/welcome'];
             if (!authPaths.includes(location.pathname)) {
               navigate('/welcome');
             }
@@ -2376,13 +2411,12 @@ function AppContent() {
         clearTimeout(timeoutId);
         if (isMounted) {
           setUser(null);
-          if (err.name === 'AbortError') {
-            showToast('Authentication server timeout');
-          } else {
-            showToast('Could not reach authentication server');
-          }
-          const authPaths = ['/login', '/register', '/welcome'];
           if (!authPaths.includes(location.pathname)) {
+            if (err.name === 'AbortError') {
+              showToast('Server connection timeout');
+            } else {
+              showToast('Could not reach backend server');
+            }
             navigate('/welcome');
           }
         }
@@ -2441,16 +2475,13 @@ function AppContent() {
     }
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ email: logEmail, password: logPassword })
       });
       const data = await res.json();
       if (res.ok) {
+        if (data.token) setAuthToken(data.token);
         setUser(data.user);
         setAuthSubView('default');
         playHapticSound('success');
@@ -2480,12 +2511,8 @@ function AppContent() {
     }
 
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({
           name: regName,
           email: regEmail,
@@ -2500,6 +2527,7 @@ function AppContent() {
       });
       const data = await res.json();
       if (res.ok) {
+        if (data.token) setAuthToken(data.token);
         setUser(data.user);
         playHapticSound('success');
         showToast('Account created successfully');
@@ -2525,12 +2553,8 @@ function AppContent() {
 
     setOtpSending(true);
     try {
-      const res = await fetch('/api/auth/send-otp', {
+      const res = await apiFetch('/api/auth/send-otp', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ email: forgotEmail })
       });
       const data = await res.json();
@@ -2557,12 +2581,8 @@ function AppContent() {
     if (otpCountdown > 0 || otpSending) return;
     setOtpSending(true);
     try {
-      const res = await fetch('/api/auth/send-otp', {
+      const res = await apiFetch('/api/auth/send-otp', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ email: forgotEmail })
       });
       const data = await res.json();
@@ -2591,12 +2611,8 @@ function AppContent() {
     }
 
     try {
-      const res = await fetch('/api/auth/verify-otp', {
+      const res = await apiFetch('/api/auth/verify-otp', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ email: forgotEmail, otp: otpCode })
       });
       const data = await res.json();
@@ -2634,12 +2650,8 @@ function AppContent() {
     }
 
     try {
-      const res = await fetch('/api/auth/reset-password-otp', {
+      const res = await apiFetch('/api/auth/reset-password-otp', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ resetSessionToken, password: resetPasswordVal })
       });
       const data = await res.json();
@@ -2666,18 +2678,14 @@ function AppContent() {
   // Handle Logout
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { 
-        method: 'POST',
-        headers: { 'X-CSRF-Token': getCsrfToken() }
-      });
-      setUser(null);
-      setLogPassword('');
-      playHapticSound('click');
-      showToast('Logged out');
-      navigate('/login');
-    } catch {
-      showToast('Logout failed');
-    }
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    setAuthToken(null);
+    setUser(null);
+    setLogPassword('');
+    playHapticSound('click');
+    showToast('Logged out');
+    navigate('/login');
   };
 
   // Debounced food search
@@ -2689,7 +2697,7 @@ function AppContent() {
     const timer = setTimeout(async () => {
       setFoodSearchLoading(true);
       try {
-        const res = await fetch(`/api/foods/search?q=${encodeURIComponent(searchQuery.trim())}`);
+        const res = await apiFetch(`/api/foods/search?q=${encodeURIComponent(searchQuery.trim())}`);
         if (res.ok) {
           const data = await res.json();
           setFoodSearchResults(data);
@@ -2725,12 +2733,8 @@ function AppContent() {
 
     if (food.live) {
       try {
-        await fetch('/api/foods/cache', {
+        await apiFetch('/api/foods/cache', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': getCsrfToken()
-          },
           body: JSON.stringify(food)
         });
       } catch {}
@@ -2825,12 +2829,8 @@ function AppContent() {
     showToast('Entry added');
 
     try {
-      const res = await fetch('/api/logs', {
+      const res = await apiFetch('/api/logs', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({
           date: selectedDate,
           mealSlot: activeSlot,
@@ -2866,12 +2866,8 @@ function AppContent() {
     showToast('Entry updated');
 
     try {
-      const res = await fetch(`/api/logs/${targetId}`, {
+      const res = await apiFetch(`/api/logs/${targetId}`, {
         method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': getCsrfToken()
-        },
         body: JSON.stringify({ ...finalLogValues, mealSlot: activeSlot })
       });
       const data = await res.json();
@@ -2895,9 +2891,8 @@ function AppContent() {
     showToast('Entry deleted');
 
     try {
-      const res = await fetch(`/api/logs/${id}`, {
-        method: 'DELETE',
-        headers: { 'X-CSRF-Token': getCsrfToken() }
+      const res = await apiFetch(`/api/logs/${id}`, {
+        method: 'DELETE'
       });
       if (!res.ok) {
         setLogs(backupState);
@@ -2918,9 +2913,8 @@ function AppContent() {
     showToast(`${slotKey.replace('_', ' ')} cleared`);
 
     try {
-      const res = await fetch(`/api/logs?date=${selectedDate}&mealSlot=${slotKey}`, {
-        method: 'DELETE',
-        headers: { 'X-CSRF-Token': getCsrfToken() }
+      const res = await apiFetch(`/api/logs?date=${selectedDate}&mealSlot=${slotKey}`, {
+        method: 'DELETE'
       });
       if (!res.ok) {
         setLogs(backupState);

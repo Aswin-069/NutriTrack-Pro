@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: nutritrack-pro-backend
+    env: node
+    region: singapore
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: FDC_API_KEY
+        value: KOzwvgfXWvhVqdlzJdx9ukAxdNJJVEdjTpapfpMe
+      - key: SMTP_EMAIL
+        value: aswinacharya2006@gmail.com
+      - key: SMTP_APP_PASSWORD
+        value: tpgc lcsl jueh twyb
