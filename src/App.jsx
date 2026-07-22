@@ -2479,7 +2479,19 @@ function AppContent() {
         method: 'POST',
         body: JSON.stringify({ email: logEmail, password: logPassword })
       });
-      const data = await res.json();
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        if (res.status === 502 || res.status === 503) {
+          triggerAuthShake();
+          return showToast('Backend server is waking up. Please try again in 10 seconds.');
+        }
+        triggerAuthShake();
+        return showToast(`Server response error (${res.status})`);
+      }
+
       if (res.ok) {
         if (data.token) setAuthToken(data.token);
         setUser(data.user);
@@ -2491,9 +2503,12 @@ function AppContent() {
         triggerAuthShake();
         showToast(data.error || 'Login failed');
       }
-    } catch {
+    } catch (err) {
+      console.error('Login request error:', err);
       triggerAuthShake();
-      showToast('Could not reach authentication server');
+      showToast(err.message === 'Failed to fetch' 
+        ? 'Could not connect to backend server. Check VITE_API_URL or server status.' 
+        : (err.message || 'Could not reach authentication server'));
     }
   };
 
@@ -2525,7 +2540,19 @@ function AppContent() {
           activityLevel: regActivity
         })
       });
-      const data = await res.json();
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        if (res.status === 502 || res.status === 503) {
+          triggerAuthShake();
+          return showToast('Backend server is waking up. Please try again in 10 seconds.');
+        }
+        triggerAuthShake();
+        return showToast(`Server response error (${res.status})`);
+      }
+
       if (res.ok) {
         if (data.token) setAuthToken(data.token);
         setUser(data.user);
@@ -2536,9 +2563,12 @@ function AppContent() {
         triggerAuthShake();
         showToast(data.error || 'Registration failed');
       }
-    } catch {
+    } catch (err) {
+      console.error('Register request error:', err);
       triggerAuthShake();
-      showToast('Could not reach authentication server');
+      showToast(err.message === 'Failed to fetch' 
+        ? 'Could not connect to backend server. Check VITE_API_URL or server status.' 
+        : (err.message || 'Could not reach authentication server'));
     }
   };
 
