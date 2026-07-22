@@ -21,7 +21,20 @@ import {
   foodCacheSchema 
 } from './middleware/validationMiddleware.js';
 
+import { execSync } from 'child_process';
+
 dotenv.config();
+
+// Auto-verify and push database schema on startup so tables always exist
+if (process.env.DATABASE_URL && process.env.NODE_ENV === 'production') {
+  try {
+    console.log('[DB Auto-Sync] Verifying PostgreSQL schema tables...');
+    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+    console.log('[DB Auto-Sync] Database schema verified and up to date.');
+  } catch (err) {
+    console.error('[DB Auto-Sync Warning]:', err.message);
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;

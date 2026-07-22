@@ -76,7 +76,12 @@ export const register = async (req, res) => {
     return res.status(201).json({ user: userWithoutPassword, token });
   } catch (error) {
     console.error('Registration error:', error);
-    return res.status(500).json({ error: 'Registration failed. Please try again.' });
+    const isDbError = error.message?.includes('localhost') || error.message?.includes("Can't reach database");
+    return res.status(500).json({ 
+      error: isDbError 
+        ? "Database error: Please update DATABASE_URL in Render to your cloud PostgreSQL database URL (Neon / Render Postgres / Supabase)."
+        : (error.message || 'Registration failed. Please try again.') 
+    });
   }
 };
 
@@ -146,7 +151,12 @@ export const login = async (req, res) => {
     return res.json({ user: userWithoutPassword, token });
   } catch (error) {
     console.error('Login error:', error);
-    return res.status(500).json({ error: 'Login failed. Please try again.' });
+    const isDbError = error.message?.includes('localhost') || error.message?.includes("Can't reach database");
+    return res.status(500).json({ 
+      error: isDbError 
+        ? "Database error: Please update DATABASE_URL in Render to your cloud PostgreSQL database URL (Neon / Render Postgres / Supabase)."
+        : (error.message || 'Login failed. Please try again.') 
+    });
   }
 };
 
