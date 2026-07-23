@@ -22,8 +22,12 @@ import {
 } from './middleware/validationMiddleware.js';
 
 import { execSync } from 'child_process';
+import { verifyEmailProviderSetup } from './utils/emailService.js';
 
 dotenv.config();
+
+// Verify Email Provider on startup
+verifyEmailProviderSetup();
 
 // Auto-verify and push database schema on startup so tables always exist
 if (process.env.DATABASE_URL && process.env.NODE_ENV === 'production') {

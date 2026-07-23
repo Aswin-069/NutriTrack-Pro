@@ -1,54 +1,35 @@
-import nodemailer from 'nodemailer';
-
 /**
- * Creates a direct Nodemailer transport for Gmail SMTP fallback.
+ * Resend REST API Email Service (Port 443 HTTPS Only - Zero SMTP)
  */
-function createDirectTransporter(smtpEmail, smtpPassword, configType = 'service') {
-  if (configType === 'ssl') {
-    return nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      connectionTimeout: 4000,
-      socketTimeout: 4000,
-      greetingTimeout: 2000,
-      auth: { user: smtpEmail, pass: smtpPassword },
-      tls: { rejectUnauthorized: false }
-    });
+
+export function verifyEmailProviderSetup() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
+  
+  if (!apiKey) {
+    console.error('❌ [FATAL STARTUP ERROR] RESEND_API_KEY environment variable is missing.');
+    console.error('👉 Please add RESEND_API_KEY=re_... in your Render Environment Variables.');
+    return { valid: false, maskedKey: 'NOT_CONFIGURED' };
   }
 
-  if (configType === 'starttls') {
-    return nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      connectionTimeout: 4000,
-      socketTimeout: 4000,
-      greetingTimeout: 2000,
-      auth: { user: smtpEmail, pass: smtpPassword },
-      tls: { rejectUnauthorized: false }
-    });
-  }
-
-  return nodemailer.createTransport({
-    service: 'gmail',
-    connectionTimeout: 4000,
-    socketTimeout: 4000,
-    greetingTimeout: 2000,
-    auth: { user: smtpEmail, pass: smtpPassword }
-  });
+  const masked = apiKey.length > 7 ? `${apiKey.substring(0, 7)}****` : 're_****';
+  console.log(`📧 [EMAIL PROVIDER]: Resend REST API (Port 443 HTTPS)`);
+  console.log(`🔑 [RESEND API KEY LOADED]: ${masked}`);
+  return { valid: true, maskedKey: masked };
 }
 
 /**
- * Sends OTP Email via Resend HTTPS API (Port 443 - Bypasses Cloud Firewalls) or Gmail SMTP.
+ * Sends OTP Email exclusively via Resend REST API over HTTPS (Port 443).
  */
 export async function sendOtpEmail(toEmail, otpCode) {
-  const smtpEmail = process.env.SMTP_EMAIL;
-  const smtpPassword = process.env.SMTP_APP_PASSWORD;
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
 
-  // Print OTP to server console logs for instant developer audit & fallback
   console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Verification Code: [ ${otpCode} ]`);
+
+  if (!apiKey) {
+    const err = 'RESEND_API_KEY is not set in Render environment variables. Please add RESEND_API_KEY=re_... to send emails.';
+    console.error(`❌ [EMAIL DISPATCH ERROR]: ${err}`);
+    throw new Error(err);
+  }
 
   const subject = 'NutriTrack Pro - Your 6-Digit Verification Code';
 
@@ -84,72 +65,36 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
-  const cleanResendKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
-
-  // METHOD 1: Resend HTTPS API (Port 443 - Never blocked by Render firewall)
-  if (cleanResendKey) {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${cleanResendKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          from: 'NutriTrack Pro <onboarding@resend.dev>',
-          to: [toEmail],
-          subject: subject,
-          html: htmlContent,
-          text: textContent
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ [RESEND HTTPS DISPATCH SUCCESS] ID: ${data.id} -> ${toEmail}`);
-        return { success: true, messageId: data.id };
-      } else {
-        const errText = await response.text();
-        console.warn(`⚠️ [RESEND API WARN]: ${errText}`);
-      }
-    } catch (apiErr) {
-      console.warn(`⚠️ [RESEND HTTPS ERROR]: ${apiErr.message}`);
-    }
-  }
-
-  // METHOD 2: Gmail SMTP Direct Connections (Ports 465 / 587)
-  if (smtpEmail && smtpPassword && !smtpEmail.includes('your_gmail')) {
-    const emailOptions = {
-      from: `"NutriTrack Pro Security" <${smtpEmail}>`,
-      to: toEmail,
-      subject,
-      html: htmlContent,
-      text: textContent,
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
       headers: {
-        'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
-        'X-Priority': '1 (Highest)',
-        'Importance': 'high'
-      }
-    };
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'NutriTrack Pro <onboarding@resend.dev>',
+        to: [toEmail],
+        subject: subject,
+        html: htmlContent,
+        text: textContent
+      })
+    });
 
-    const transportConfigs = ['service', 'ssl', 'starttls'];
-    let lastError = null;
+    const resText = await response.text();
+    let resJson = {};
+    try { resJson = JSON.parse(resText); } catch {}
 
-    for (const configType of transportConfigs) {
-      try {
-        const transporter = createDirectTransporter(smtpEmail, smtpPassword, configType);
-        const info = await transporter.sendMail(emailOptions);
-        console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] (${configType.toUpperCase()}) Message ID: ${info.messageId} -> ${toEmail}`);
-        return { success: true, messageId: info.messageId };
-      } catch (err) {
-        lastError = err;
-        console.warn(`⚠️ [SMTP ATTEMPT (${configType.toUpperCase()}) FAILED]: ${err.message}`);
-      }
+    if (response.ok) {
+      console.log(`✅ [RESEND REST API DISPATCH SUCCESS] ID: ${resJson.id} -> ${toEmail}`);
+      return { success: true, messageId: resJson.id };
+    } else {
+      const errorDetail = resJson.message || resJson.name || resText || `HTTP ${response.status}`;
+      console.error(`❌ [RESEND REST API REJECTED] (${response.status}):`, errorDetail);
+      throw new Error(`Resend API Error: ${errorDetail}`);
     }
-
-    console.error(`❌ [GMAIL SMTP BLOCKED BY CLOUD FIREWALL] (To: ${toEmail}):`, lastError?.message);
+  } catch (err) {
+    console.error(`❌ [RESEND API DISPATCH FAILED] (To: ${toEmail}):`, err.message);
+    throw new Error(err.message || 'Failed to dispatch email via Resend REST API');
   }
-
-  // If cloud firewall blocks raw SMTP and no Resend key is set
-  throw new Error('Cloud provider firewall blocked SMTP ports (465/587). Add RESEND_API_KEY in Render environment variables for instant HTTPS delivery.');
 }
