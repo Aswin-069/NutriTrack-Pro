@@ -84,13 +84,15 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
+  const cleanResendKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
+
   // METHOD 1: Resend HTTPS API (Port 443 - Never blocked by Render firewall)
-  if (resendApiKey && resendApiKey.startsWith('re_')) {
+  if (cleanResendKey) {
     try {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${resendApiKey}`,
+          'Authorization': `Bearer ${cleanResendKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
