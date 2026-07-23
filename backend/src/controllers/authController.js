@@ -29,8 +29,8 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Hash with bcrypt cost factor 12
-    const passwordHash = await bcrypt.hash(password, 12);
+    // Hash with bcrypt cost factor 10 (OWASP recommended standard for responsive cloud auth)
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const parsedHeight = parseFloat(height);
     const parsedWeight = parseFloat(weight);
@@ -220,7 +220,7 @@ export const sendOtp = async (req, res) => {
       where: { id: user.id },
       data: {
         otpHash,
-        otpExpires: new Date(Date.now() + 5 * 60 * 1000), // 5 mins
+        otpExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 mins expiry
         otpAttempts: 0,
         otpLockoutUntil: null
       }
@@ -356,7 +356,7 @@ export const resetPasswordWithOtp = async (req, res) => {
       });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     await prisma.user.update({
       where: { id: user.id },

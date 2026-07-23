@@ -4,16 +4,14 @@ let transporterInstance = null;
 let transporterVerified = false;
 
 /**
- * Returns a reusable, pooled Nodemailer transporter.
- * The instance is created once and reused across all requests (connection pooling).
+ * Returns a reusable, pooled Nodemailer transporter with tight socket timeouts.
  */
 function getTransporter() {
   const smtpEmail = process.env.SMTP_EMAIL;
   const smtpPassword = process.env.SMTP_APP_PASSWORD;
 
   if (!smtpEmail || !smtpPassword || smtpEmail.includes('your_gmail')) {
-    const errMsg =
-      'SMTP_EMAIL or SMTP_APP_PASSWORD is not configured in backend .env file. Please provide valid Gmail credentials.';
+    const errMsg = 'SMTP_EMAIL or SMTP_APP_PASSWORD is not configured in backend .env file.';
     console.error(`❌ [GMAIL SMTP CONFIG ERROR]: ${errMsg}`);
     throw new Error(errMsg);
   }
@@ -21,22 +19,26 @@ function getTransporter() {
   if (!transporterInstance) {
     transporterInstance = nodemailer.createTransport({
       service: 'gmail',
-      pool: true,          // enable connection pooling
+      pool: true,
       maxConnections: 5,
       maxMessages: 100,
+      rateLimit: 14, // Max 14 emails per second for Gmail limits
+      connectionTimeout: 6000,
+      socketTimeout: 8000,
+      greetingTimeout: 4000,
       auth: {
         user: smtpEmail,
         pass: smtpPassword,
       },
     });
-    transporterVerified = false; // reset verification flag on new instance
+    transporterVerified = false;
   }
 
   return { transporter: transporterInstance, smtpEmail };
 }
 
 /**
- * Verifies the SMTP connection once on first use, then reuses the verified transporter.
+ * Verifies the SMTP connection on initialization or resets if disconnected.
  */
 async function getVerifiedTransporter() {
   const { transporter, smtpEmail } = getTransporter();
@@ -45,9 +47,8 @@ async function getVerifiedTransporter() {
     try {
       await transporter.verify();
       transporterVerified = true;
-      console.log('✅ [GMAIL SMTP] Transporter verified and ready.');
+      console.log('✅ [GMAIL SMTP] Transport pool verified & active.');
     } catch (err) {
-      // Reset so next request retries verification
       transporterInstance = null;
       transporterVerified = false;
       console.error('❌ [GMAIL SMTP VERIFY FAILED]:', err.message);
@@ -58,56 +59,82 @@ async function getVerifiedTransporter() {
   return { transporter, smtpEmail };
 }
 
+/**
+ * Sends OTP Email with 3-tier exponential retry logic for high delivery reliability.
+ */
 export async function sendOtpEmail(toEmail, otpCode) {
-  const { transporter, smtpEmail } = await getVerifiedTransporter();
-
-  const subject = 'NutriTrack Pro - Password Reset Verification Code';
+  const startTime = Date.now();
+  const subject = 'NutriTrack Pro - Your 6-Digit Password Reset Code';
 
   const htmlContent = `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
       <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; margin: 0; padding: 40px 20px; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; margin: 0; padding: 40px 20px; }
           .container { max-width: 480px; margin: 0 auto; background-color: #09090b; border: 1px solid #27272a; border-radius: 20px; padding: 36px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
-          .logo { font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; margin-bottom: 24px; text-align: center; }
-          .title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #a1a1aa; margin-bottom: 12px; }
-          .text { font-size: 13px; line-height: 1.6; color: #d4d4d8; margin-bottom: 28px; }
-          .otp-box { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 14px; padding: 20px; text-align: center; font-family: monospace; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #ffffff; margin-bottom: 28px; }
-          .notice { font-size: 11px; color: #71717a; text-align: center; line-height: 1.5; border-top: 1px solid #18181b; padding-top: 20px; margin-top: 20px; }
+          .logo { font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; margin-bottom: 24px; text-align: center; }
+          .title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #a1a1aa; margin-bottom: 12px; }
+          .text { font-size: 14px; line-height: 1.6; color: #d4d4d8; margin-bottom: 24px; }
+          .otp-box { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 14px; padding: 22px; text-align: center; font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #ffffff; margin-bottom: 24px; }
+          .notice { font-size: 12px; color: #71717a; text-align: center; line-height: 1.5; border-top: 1px solid #18181b; padding-top: 20px; margin-top: 24px; }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="logo">NutriTrack Pro</div>
-          <div class="title">Password Reset Verification</div>
-          <div class="text">You requested a password reset for your account. Use the 6-digit verification code below to proceed:</div>
+          <div class="title">Security Verification</div>
+          <div class="text">You requested a password reset for your NutriTrack Pro account. Enter the 6-digit verification code below:</div>
           <div class="otp-box">${otpCode}</div>
-          <div class="text" style="text-align: center; font-size: 12px; color: #a1a1aa;">This code will expire in <strong>5 minutes</strong>.</div>
+          <div class="text" style="text-align: center; font-size: 12px; color: #a1a1aa;">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</div>
           <div class="notice">
-            If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.
+            If you did not request this code, you can safely ignore this email. Your password will remain unchanged.
           </div>
         </div>
       </body>
     </html>
   `;
 
-  const textContent = `NutriTrack Pro - Password Reset Verification Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 5 minutes.\n\nIf you did not request a password reset, please ignore this email.`;
+  const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.\n\nIf you did not request a password reset, please ignore this message.`;
 
-  try {
-    const info = await transporter.sendMail({
-      from: `"NutriTrack Pro" <${smtpEmail}>`,
-      to: toEmail,
-      subject,
-      html: htmlContent,
-      text: textContent,
-    });
+  let lastError = null;
 
-    console.log(`✅ [GMAIL SMTP DISPATCH SUCCESSFUL] Message ID: ${info.messageId} (To: ${toEmail})`);
-    return { success: true, messageId: info.messageId };
-  } catch (err) {
-    console.error(`❌ [GMAIL SMTP DISPATCH FAILED] (To: ${toEmail}):`, err.message);
-    throw new Error(err.message || 'Failed to send verification email via Gmail SMTP');
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { transporter, smtpEmail } = await getVerifiedTransporter();
+
+      const info = await transporter.sendMail({
+        from: `"NutriTrack Pro Security" <${smtpEmail}>`,
+        to: toEmail,
+        subject,
+        html: htmlContent,
+        text: textContent,
+        headers: {
+          'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
+          'X-Priority': '1 (Highest)',
+          'Importance': 'high'
+        }
+      });
+
+      const duration = Date.now() - startTime;
+      console.log(`✅ [GMAIL SMTP SUCCESS] Message ID: ${info.messageId} | Delivered to: ${toEmail} in ${duration}ms (Attempt ${attempt})`);
+      return { success: true, messageId: info.messageId, durationMs: duration };
+    } catch (err) {
+      lastError = err;
+      console.warn(`⚠️ [GMAIL SMTP ATTEMPT ${attempt} FAILED] (To: ${toEmail}): ${err.message}`);
+      
+      // Invalidate transporter so next retry gets a fresh connection
+      transporterInstance = null;
+      transporterVerified = false;
+
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 300));
+      }
+    }
   }
+
+  console.error(`❌ [GMAIL SMTP EXHAUSTED] All 3 dispatch attempts failed for ${toEmail}:`, lastError?.message);
+  throw new Error(lastError?.message || 'Failed to deliver OTP email after 3 retries.');
 }
