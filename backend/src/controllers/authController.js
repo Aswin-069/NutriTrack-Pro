@@ -19,6 +19,26 @@ function logSecurityEvent(eventType, details) {
   console.log(`[SECURITY AUDIT] [${timestamp}] [${eventType}] : ${JSON.stringify(details)}`);
 }
 
+// Automatic retry helper for serverless DB cold-starts (Neon compute sleep)
+async function withDbRetry(fn, maxRetries = 2) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const isConn = err.code === 'P1001' || err.message?.includes("Can't reach database") || err.message?.includes('connect');
+      if (isConn && attempt < maxRetries) {
+        console.warn(`⚠️ [DB WAKEUP RETRY ${attempt}] Waiting 600ms for Neon database compute to initialize...`);
+        await new Promise(r => setTimeout(r, 600));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 export const register = async (req, res) => {
   try {
     const { name, email, password, height, weight, age, gender, fitnessGoal, activityLevel } = req.body;
@@ -28,7 +48,7 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: 'Please enter a valid email address' });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email: cleanEmail } });
+    const existingUser = await withDbRetry(() => prisma.user.findUnique({ where: { email: cleanEmail } }));
     if (existingUser) {
       logSecurityEvent('REGISTRATION_FAILED_EMAIL_TAKEN', { email: cleanEmail });
       return res.status(400).json({ error: 'Email already registered' });
@@ -95,7 +115,7 @@ export const login = async (req, res) => {
     const { email, password } = req.body;
     const cleanEmail = String(email || '').trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+    const user = await withDbRetry(() => prisma.user.findUnique({ where: { email: cleanEmail } }));
     if (!user) {
       logSecurityEvent('LOGIN_FAILED_UNKNOWN_EMAIL', { email });
       return res.status(400).json({ error: 'Invalid email or password' });
@@ -123,24 +143,24 @@ export const login = async (req, res) => {
         logSecurityEvent('ACCOUNT_LOCKED', { email, userId: user.id });
       }
 
-      await prisma.user.update({
+      await withDbRetry(() => prisma.user.update({
         where: { id: user.id },
         data: {
           failedLoginAttempts: lockoutUntil ? 0 : updatedAttempts,
           lockoutUntil
         }
-      });
+      }));
 
       return res.status(400).json({ error: message });
     }
 
-    await prisma.user.update({
+    await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         failedLoginAttempts: 0,
         lockoutUntil: null
       }
-    });
+    }));
 
     logSecurityEvent('LOGIN_SUCCESS', { userId: user.id, email: user.email });
 
@@ -177,7 +197,7 @@ export const logout = (req, res) => {
 
 export const me = async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    const user = await withDbRetry(() => prisma.user.findUnique({ where: { id: req.userId } }));
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -201,10 +221,10 @@ export const sendOtp = async (req, res) => {
       return res.status(400).json({ error: 'Please enter a valid email address' });
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await withDbRetry(() => prisma.user.findUnique({
       where: { email: cleanEmail },
       select: { id: true, email: true, otpLockoutUntil: true }
-    });
+    }));
 
     if (!user) {
       logSecurityEvent('OTP_REQUEST_UNKNOWN_EMAIL', { email: cleanEmail });
