@@ -215,7 +215,7 @@ export const sendOtp = async (req, res) => {
     const otpCode = crypto.randomInt(100000, 999999).toString();
     const otpHash = crypto.createHash('sha256').update(otpCode).digest('hex');
 
-    // Save OTP to DB first so it's valid the moment the response is sent
+    // Save OTP to DB first so it's valid for verification
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -226,18 +226,16 @@ export const sendOtp = async (req, res) => {
       }
     });
 
-    // Respond immediately — do not block the request on SMTP delivery time
-    res.json({ message: 'Verification code sent to your email.' });
-
-    // Fire email asynchronously after responding
-    sendOtpEmail(user.email, otpCode)
-      .then(() => {
-        logSecurityEvent('OTP_GENERATED_AND_DELIVERED', { userId: user.id, email: user.email });
-      })
-      .catch((emailErr) => {
-        console.error(`❌ [ASYNC EMAIL FAILED] (To: ${user.email}):`, emailErr.message);
-        logSecurityEvent('OTP_EMAIL_DELIVERY_FAILED', { userId: user.id, email: user.email, error: emailErr.message });
-      });
+    // Deliver email via SMTP and verify delivery acknowledgment
+    try {
+      await sendOtpEmail(user.email, otpCode);
+      logSecurityEvent('OTP_GENERATED_AND_DELIVERED', { userId: user.id, email: user.email });
+      return res.json({ message: 'Verification code sent to your email.' });
+    } catch (emailErr) {
+      console.error(`❌ [EMAIL DISPATCH FAILED] (To: ${user.email}):`, emailErr.message);
+      logSecurityEvent('OTP_EMAIL_DELIVERY_FAILED', { userId: user.id, email: user.email, error: emailErr.message });
+      return res.status(500).json({ error: `Failed to send verification email: ${emailErr.message}` });
+    }
 
   } catch (error) {
     console.error('Send OTP error:', error);
