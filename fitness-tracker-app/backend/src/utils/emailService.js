@@ -1,18 +1,17 @@
 import nodemailer from 'nodemailer';
 
 /**
- * Creates a fresh direct Nodemailer transport for a single email dispatch.
- * Direct connections avoid dead socket pool hangs on cloud NAT firewalls (e.g. Render).
+ * Creates a direct Nodemailer transport for Gmail SMTP fallback.
  */
 function createDirectTransporter(smtpEmail, smtpPassword, configType = 'service') {
   if (configType === 'ssl') {
     return nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
-      secure: true, // Direct SSL
-      connectionTimeout: 5000,
-      socketTimeout: 5000,
-      greetingTimeout: 3000,
+      secure: true,
+      connectionTimeout: 4000,
+      socketTimeout: 4000,
+      greetingTimeout: 2000,
       auth: { user: smtpEmail, pass: smtpPassword },
       tls: { rejectUnauthorized: false }
     });
@@ -22,40 +21,34 @@ function createDirectTransporter(smtpEmail, smtpPassword, configType = 'service'
     return nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
-      secure: false, // STARTTLS
-      connectionTimeout: 5000,
-      socketTimeout: 5000,
-      greetingTimeout: 3000,
+      secure: false,
+      connectionTimeout: 4000,
+      socketTimeout: 4000,
+      greetingTimeout: 2000,
       auth: { user: smtpEmail, pass: smtpPassword },
       tls: { rejectUnauthorized: false }
     });
   }
 
-  // Default: Nodemailer built-in Gmail service
   return nodemailer.createTransport({
     service: 'gmail',
-    connectionTimeout: 5000,
-    socketTimeout: 5000,
-    greetingTimeout: 3000,
+    connectionTimeout: 4000,
+    socketTimeout: 4000,
+    greetingTimeout: 2000,
     auth: { user: smtpEmail, pass: smtpPassword }
   });
 }
 
 /**
- * Sends OTP Email with multi-port fallback (Gmail Service -> Port 465 SSL -> Port 587 STARTTLS).
+ * Sends OTP Email via Resend HTTPS API (Port 443 - Bypasses Cloud Firewalls) or Gmail SMTP.
  */
 export async function sendOtpEmail(toEmail, otpCode) {
   const smtpEmail = process.env.SMTP_EMAIL;
   const smtpPassword = process.env.SMTP_APP_PASSWORD;
+  const resendApiKey = process.env.RESEND_API_KEY;
 
-  // Print OTP to server console logs for audit & debugging fallback
+  // Print OTP to server console logs for instant developer audit & fallback
   console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Verification Code: [ ${otpCode} ]`);
-
-  if (!smtpEmail || !smtpPassword || smtpEmail.includes('your_gmail')) {
-    const errMsg = 'SMTP_EMAIL or SMTP_APP_PASSWORD is not configured in backend environment variables.';
-    console.error(`❌ [GMAIL SMTP CONFIG ERROR]: ${errMsg}`);
-    throw new Error(errMsg);
-  }
 
   const subject = 'NutriTrack Pro - Your 6-Digit Verification Code';
 
@@ -91,34 +84,70 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
-  const emailOptions = {
-    from: `"NutriTrack Pro Security" <${smtpEmail}>`,
-    to: toEmail,
-    subject,
-    html: htmlContent,
-    text: textContent,
-    headers: {
-      'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
-      'X-Priority': '1 (Highest)',
-      'Importance': 'high'
-    }
-  };
-
-  const transportConfigs = ['service', 'ssl', 'starttls'];
-  let lastError = null;
-
-  for (const configType of transportConfigs) {
+  // METHOD 1: Resend HTTPS API (Port 443 - Never blocked by Render firewall)
+  if (resendApiKey && resendApiKey.startsWith('re_')) {
     try {
-      const transporter = createDirectTransporter(smtpEmail, smtpPassword, configType);
-      const info = await transporter.sendMail(emailOptions);
-      console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] (${configType.toUpperCase()}) Message ID: ${info.messageId} -> ${toEmail}`);
-      return { success: true, messageId: info.messageId };
-    } catch (err) {
-      lastError = err;
-      console.warn(`⚠️ [SMTP DISPATCH ATTEMPT (${configType.toUpperCase()}) FAILED]: ${err.message}`);
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: 'NutriTrack Pro <onboarding@resend.dev>',
+          to: [toEmail],
+          subject: subject,
+          html: htmlContent,
+          text: textContent
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`✅ [RESEND HTTPS DISPATCH SUCCESS] ID: ${data.id} -> ${toEmail}`);
+        return { success: true, messageId: data.id };
+      } else {
+        const errText = await response.text();
+        console.warn(`⚠️ [RESEND API WARN]: ${errText}`);
+      }
+    } catch (apiErr) {
+      console.warn(`⚠️ [RESEND HTTPS ERROR]: ${apiErr.message}`);
     }
   }
 
-  console.error(`❌ [GMAIL SMTP ALL TRANSPORTS FAILED] (To: ${toEmail}):`, lastError?.message);
-  throw new Error(`SMTP connection failed: ${lastError?.message || 'Connection timeout'}`);
+  // METHOD 2: Gmail SMTP Direct Connections (Ports 465 / 587)
+  if (smtpEmail && smtpPassword && !smtpEmail.includes('your_gmail')) {
+    const emailOptions = {
+      from: `"NutriTrack Pro Security" <${smtpEmail}>`,
+      to: toEmail,
+      subject,
+      html: htmlContent,
+      text: textContent,
+      headers: {
+        'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
+        'X-Priority': '1 (Highest)',
+        'Importance': 'high'
+      }
+    };
+
+    const transportConfigs = ['service', 'ssl', 'starttls'];
+    let lastError = null;
+
+    for (const configType of transportConfigs) {
+      try {
+        const transporter = createDirectTransporter(smtpEmail, smtpPassword, configType);
+        const info = await transporter.sendMail(emailOptions);
+        console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] (${configType.toUpperCase()}) Message ID: ${info.messageId} -> ${toEmail}`);
+        return { success: true, messageId: info.messageId };
+      } catch (err) {
+        lastError = err;
+        console.warn(`⚠️ [SMTP ATTEMPT (${configType.toUpperCase()}) FAILED]: ${err.message}`);
+      }
+    }
+
+    console.error(`❌ [GMAIL SMTP BLOCKED BY CLOUD FIREWALL] (To: ${toEmail}):`, lastError?.message);
+  }
+
+  // If cloud firewall blocks raw SMTP and no Resend key is set
+  throw new Error('Cloud provider firewall blocked SMTP ports (465/587). Add RESEND_API_KEY in Render environment variables for instant HTTPS delivery.');
 }
