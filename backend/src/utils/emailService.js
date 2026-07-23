@@ -1,77 +1,69 @@
 import nodemailer from 'nodemailer';
 
-let transporterInstance = null;
-let transporterVerified = false;
+/**
+ * Creates a fresh direct Nodemailer transport for a single email dispatch.
+ * Direct connections avoid dead socket pool hangs on cloud NAT firewalls (e.g. Render).
+ */
+function createDirectTransporter(smtpEmail, smtpPassword, configType = 'service') {
+  if (configType === 'ssl') {
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true, // Direct SSL
+      connectionTimeout: 5000,
+      socketTimeout: 5000,
+      greetingTimeout: 3000,
+      auth: { user: smtpEmail, pass: smtpPassword },
+      tls: { rejectUnauthorized: false }
+    });
+  }
+
+  if (configType === 'starttls') {
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false, // STARTTLS
+      connectionTimeout: 5000,
+      socketTimeout: 5000,
+      greetingTimeout: 3000,
+      auth: { user: smtpEmail, pass: smtpPassword },
+      tls: { rejectUnauthorized: false }
+    });
+  }
+
+  // Default: Nodemailer built-in Gmail service
+  return nodemailer.createTransport({
+    service: 'gmail',
+    connectionTimeout: 5000,
+    socketTimeout: 5000,
+    greetingTimeout: 3000,
+    auth: { user: smtpEmail, pass: smtpPassword }
+  });
+}
 
 /**
- * Returns a reusable, pooled Nodemailer transporter with tight socket timeouts.
+ * Sends OTP Email with multi-port fallback (Gmail Service -> Port 465 SSL -> Port 587 STARTTLS).
  */
-function getTransporter() {
+export async function sendOtpEmail(toEmail, otpCode) {
   const smtpEmail = process.env.SMTP_EMAIL;
   const smtpPassword = process.env.SMTP_APP_PASSWORD;
 
+  // Print OTP to server console logs for audit & debugging fallback
+  console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Verification Code: [ ${otpCode} ]`);
+
   if (!smtpEmail || !smtpPassword || smtpEmail.includes('your_gmail')) {
-    const errMsg = 'SMTP_EMAIL or SMTP_APP_PASSWORD is not configured in backend .env file.';
+    const errMsg = 'SMTP_EMAIL or SMTP_APP_PASSWORD is not configured in backend environment variables.';
     console.error(`❌ [GMAIL SMTP CONFIG ERROR]: ${errMsg}`);
     throw new Error(errMsg);
   }
 
-  if (!transporterInstance) {
-    transporterInstance = nodemailer.createTransport({
-      service: 'gmail',
-      pool: true,
-      maxConnections: 5,
-      maxMessages: 100,
-      rateLimit: 14, // Max 14 emails per second for Gmail limits
-      connectionTimeout: 6000,
-      socketTimeout: 8000,
-      greetingTimeout: 4000,
-      auth: {
-        user: smtpEmail,
-        pass: smtpPassword,
-      },
-    });
-    transporterVerified = false;
-  }
-
-  return { transporter: transporterInstance, smtpEmail };
-}
-
-/**
- * Verifies the SMTP connection on initialization or resets if disconnected.
- */
-async function getVerifiedTransporter() {
-  const { transporter, smtpEmail } = getTransporter();
-
-  if (!transporterVerified) {
-    try {
-      await transporter.verify();
-      transporterVerified = true;
-      console.log('✅ [GMAIL SMTP] Transport pool verified & active.');
-    } catch (err) {
-      transporterInstance = null;
-      transporterVerified = false;
-      console.error('❌ [GMAIL SMTP VERIFY FAILED]:', err.message);
-      throw new Error(`SMTP connection failed: ${err.message}`);
-    }
-  }
-
-  return { transporter, smtpEmail };
-}
-
-/**
- * Sends OTP Email with 3-tier exponential retry logic for high delivery reliability.
- */
-export async function sendOtpEmail(toEmail, otpCode) {
-  const startTime = Date.now();
-  const subject = 'NutriTrack Pro - Your 6-Digit Password Reset Code';
+  const subject = 'NutriTrack Pro - Your 6-Digit Verification Code';
 
   const htmlContent = `
     <!DOCTYPE html>
     <html lang="en">
       <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; margin: 0; padding: 40px 20px; }
           .container { max-width: 480px; margin: 0 auto; background-color: #09090b; border: 1px solid #27272a; border-radius: 20px; padding: 36px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
@@ -97,44 +89,36 @@ export async function sendOtpEmail(toEmail, otpCode) {
     </html>
   `;
 
-  const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.\n\nIf you did not request a password reset, please ignore this message.`;
+  const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
+  const emailOptions = {
+    from: `"NutriTrack Pro Security" <${smtpEmail}>`,
+    to: toEmail,
+    subject,
+    html: htmlContent,
+    text: textContent,
+    headers: {
+      'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
+      'X-Priority': '1 (Highest)',
+      'Importance': 'high'
+    }
+  };
+
+  const transportConfigs = ['service', 'ssl', 'starttls'];
   let lastError = null;
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (const configType of transportConfigs) {
     try {
-      const { transporter, smtpEmail } = await getVerifiedTransporter();
-
-      const info = await transporter.sendMail({
-        from: `"NutriTrack Pro Security" <${smtpEmail}>`,
-        to: toEmail,
-        subject,
-        html: htmlContent,
-        text: textContent,
-        headers: {
-          'X-Entity-Ref-ID': `otp-${Date.now()}-${otpCode}`,
-          'X-Priority': '1 (Highest)',
-          'Importance': 'high'
-        }
-      });
-
-      const duration = Date.now() - startTime;
-      console.log(`✅ [GMAIL SMTP SUCCESS] Message ID: ${info.messageId} | Delivered to: ${toEmail} in ${duration}ms (Attempt ${attempt})`);
-      return { success: true, messageId: info.messageId, durationMs: duration };
+      const transporter = createDirectTransporter(smtpEmail, smtpPassword, configType);
+      const info = await transporter.sendMail(emailOptions);
+      console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] (${configType.toUpperCase()}) Message ID: ${info.messageId} -> ${toEmail}`);
+      return { success: true, messageId: info.messageId };
     } catch (err) {
       lastError = err;
-      console.warn(`⚠️ [GMAIL SMTP ATTEMPT ${attempt} FAILED] (To: ${toEmail}): ${err.message}`);
-      
-      // Invalidate transporter so next retry gets a fresh connection
-      transporterInstance = null;
-      transporterVerified = false;
-
-      if (attempt < 3) {
-        await new Promise(resolve => setTimeout(resolve, attempt * 300));
-      }
+      console.warn(`⚠️ [SMTP DISPATCH ATTEMPT (${configType.toUpperCase()}) FAILED]: ${err.message}`);
     }
   }
 
-  console.error(`❌ [GMAIL SMTP EXHAUSTED] All 3 dispatch attempts failed for ${toEmail}:`, lastError?.message);
-  throw new Error(lastError?.message || 'Failed to deliver OTP email after 3 retries.');
+  console.error(`❌ [GMAIL SMTP ALL TRANSPORTS FAILED] (To: ${toEmail}):`, lastError?.message);
+  throw new Error(`SMTP connection failed: ${lastError?.message || 'Connection timeout'}`);
 }
