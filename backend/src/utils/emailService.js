@@ -65,6 +65,8 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
+  const fromSender = process.env.RESEND_FROM_EMAIL || 'NutriTrack Pro <auth@nutritrackpro.com>';
+
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -73,7 +75,7 @@ export async function sendOtpEmail(toEmail, otpCode) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'NutriTrack Pro <onboarding@resend.dev>',
+        from: fromSender,
         to: [toEmail],
         subject: subject,
         html: htmlContent,
