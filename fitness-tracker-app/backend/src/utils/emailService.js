@@ -1,35 +1,41 @@
-/**
- * Resend REST API Email Service (Port 443 HTTPS Only - Zero SMTP)
- */
+import nodemailer from 'nodemailer';
 
 export function verifyEmailProviderSetup() {
-  const apiKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
-  
-  if (!apiKey) {
-    console.error('❌ [FATAL STARTUP ERROR] RESEND_API_KEY environment variable is missing.');
-    console.error('👉 Please add RESEND_API_KEY=re_... in your Render Environment Variables.');
-    return { valid: false, maskedKey: 'NOT_CONFIGURED' };
+  const email = process.env.SMTP_EMAIL;
+  const pass = process.env.SMTP_APP_PASSWORD;
+
+  if (!email || !pass) {
+    console.error('❌ [GMAIL SMTP ERROR] SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is missing.');
+    return { valid: false, maskedUser: email || 'NOT_SET' };
   }
 
-  const masked = apiKey.length > 7 ? `${apiKey.substring(0, 7)}****` : 're_****';
-  console.log(`📧 [EMAIL PROVIDER]: Resend REST API (Port 443 HTTPS)`);
-  console.log(`🔑 [RESEND API KEY LOADED]: ${masked}`);
-  return { valid: true, maskedKey: masked };
+  console.log(`📧 [EMAIL PROVIDER]: Nodemailer Gmail SMTP (smtp.gmail.com:465)`);
+  console.log(`👤 [GMAIL USER]: ${email}`);
+  return { valid: true, maskedUser: email };
 }
 
 /**
- * Sends OTP Email exclusively via Resend REST API over HTTPS (Port 443).
+ * Sends OTP Email via Nodemailer using Gmail SMTP
  */
 export async function sendOtpEmail(toEmail, otpCode) {
-  const apiKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
+  const emailUser = process.env.SMTP_EMAIL;
+  const emailPass = process.env.SMTP_APP_PASSWORD;
 
-  console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Verification Code: [ ${otpCode} ]`);
+  console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Code: [ ${otpCode} ]`);
 
-  if (!apiKey) {
-    const err = 'RESEND_API_KEY is not set in Render environment variables. Please add RESEND_API_KEY=re_... to send emails.';
-    console.error(`❌ [EMAIL DISPATCH ERROR]: ${err}`);
-    throw new Error(err);
+  if (!emailUser || !emailPass) {
+    throw new Error('SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is not configured.');
   }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: emailUser,
+      pass: emailPass
+    }
+  });
 
   const subject = 'NutriTrack Pro - Your 6-Digit Verification Code';
 
@@ -65,38 +71,20 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
-  const fromSender = process.env.RESEND_FROM_EMAIL || 'NutriTrack Pro <onboarding@resend.dev>';
+  const mailOptions = {
+    from: `"NutriTrack Pro" <${emailUser}>`,
+    to: toEmail,
+    subject: subject,
+    text: textContent,
+    html: htmlContent
+  };
 
   try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: fromSender,
-        to: [toEmail],
-        subject: subject,
-        html: htmlContent,
-        text: textContent
-      })
-    });
-
-    const resText = await response.text();
-    let resJson = {};
-    try { resJson = JSON.parse(resText); } catch {}
-
-    if (response.ok) {
-      console.log(`✅ [RESEND REST API DISPATCH SUCCESS] ID: ${resJson.id} -> ${toEmail}`);
-      return { success: true, messageId: resJson.id };
-    } else {
-      const errorDetail = resJson.message || resJson.name || resText || `HTTP ${response.status}`;
-      console.error(`❌ [RESEND REST API REJECTED] (${response.status}):`, errorDetail);
-      throw new Error(`Resend API Error: ${errorDetail}`);
-    }
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] ID: ${info.messageId} -> ${toEmail}`);
+    return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ [RESEND API DISPATCH FAILED] (To: ${toEmail}):`, err.message);
-    throw new Error(err.message || 'Failed to dispatch email via Resend REST API');
+    console.error(`❌ [GMAIL SMTP DISPATCH FAILED] (To: ${toEmail}):`, err.message);
+    throw new Error(`Gmail SMTP Dispatch Failed: ${err.message}`);
   }
 }
