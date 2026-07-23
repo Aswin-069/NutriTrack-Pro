@@ -39,8 +39,8 @@ function getCsrfToken() {
 }
 
 // Base API URL configuration
-// Uses VITE_API_URL if defined in environment, defaults to empty string for relative proxying in dev
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+// Uses VITE_API_URL if defined in environment, defaults to production Render backend URL
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://nutritrack-pro-backend.onrender.com').replace(/\/$/, '');
 
 // Get stored Auth Token
 function getAuthToken() {
