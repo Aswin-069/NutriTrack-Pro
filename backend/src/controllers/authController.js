@@ -22,10 +22,15 @@ function logSecurityEvent(eventType, details) {
 export const register = async (req, res) => {
   try {
     const { name, email, password, height, weight, age, gender, fitnessGoal, activityLevel } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (!cleanEmail) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (existingUser) {
-      logSecurityEvent('REGISTRATION_FAILED_EMAIL_TAKEN', { email });
+      logSecurityEvent('REGISTRATION_FAILED_EMAIL_TAKEN', { email: cleanEmail });
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -48,7 +53,7 @@ export const register = async (req, res) => {
     const user = await prisma.user.create({
       data: {
         name,
-        email,
+        email: cleanEmail,
         passwordHash,
         height: parsedHeight,
         weight: parsedWeight,
@@ -88,8 +93,9 @@ export const register = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const cleanEmail = String(email || '').trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (!user) {
       logSecurityEvent('LOGIN_FAILED_UNKNOWN_EMAIL', { email });
       return res.status(400).json({ error: 'Invalid email or password' });
@@ -256,7 +262,8 @@ export const verifyOtp = async (req, res) => {
       return res.status(400).json({ error: 'Verification code must be 6 digits' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (!user) {
       return res.status(400).json({ error: 'Invalid email or verification code' });
     }
