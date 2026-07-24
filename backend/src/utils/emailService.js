@@ -10,22 +10,19 @@ export function verifyEmailProviderSetup() {
     return { valid: false, provider: 'NONE' };
   }
 
-  if (email && pass) {
+  if (resendKey) {
+    console.log(`📧 [PRIMARY EMAIL PROVIDER]: Resend REST API (HTTPS Port 443 - Cloud Egress Unblocked)`);
+  } else if (email && pass) {
     const masked = email.length > 5 ? `${email.substring(0, 4)}***` : '***';
     console.log(`📧 [PRIMARY EMAIL PROVIDER]: Nodemailer Gmail SMTP (smtp.gmail.com:465, IPv4 Enforced)`);
     console.log(`👤 [GMAIL USER LOADED]: ${masked}`);
   }
 
-  if (resendKey) {
-    console.log(`📧 [FALLBACK EMAIL PROVIDER]: Resend REST API (HTTPS Port 443)`);
-  }
-
-  return { valid: true, provider: email ? 'SMTP' : 'RESEND' };
+  return { valid: true, provider: resendKey ? 'RESEND' : 'SMTP' };
 }
 
 /**
- * Sends OTP Email via Nodemailer (Gmail SMTP, IPv4 Enforced)
- * Automatically falls back to Resend REST API (HTTPS 443) if SMTP ports are blocked by Render.
+ * Sends OTP Email with comprehensive SMTP diagnostics and instant HTTPS API failover
  */
 export async function sendOtpEmail(toEmail, otpCode) {
   const emailUser = process.env.SMTP_EMAIL;
@@ -73,75 +70,7 @@ export async function sendOtpEmail(toEmail, otpCode) {
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
   // -------------------------------------------------------------
-  // STRATEGY 1: Try Gmail SMTP via Nodemailer (IPv4 Enforced)
-  // -------------------------------------------------------------
-  if (emailUser && emailPass) {
-    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-    const port = parseInt(process.env.SMTP_PORT || '465', 10);
-    const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : (port === 465);
-    const fromAddress = process.env.EMAIL_FROM || `"NutriTrack Pro" <${emailUser}>`;
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: {
-        user: emailUser,
-        pass: emailPass
-      },
-      family: 4, // FORCE IPv4 ONLY to eliminate ENETUNREACH IPv6 errors on cloud containers
-      connectionTimeout: 6000,
-      greetingTimeout: 4000,
-      socketTimeout: 8000,
-      tls: {
-        rejectUnauthorized: true,
-        minVersion: 'TLSv1.2'
-      }
-    });
-
-    const mailOptions = {
-      from: fromAddress,
-      to: toEmail,
-      subject,
-      text: textContent,
-      html: htmlContent
-    };
-
-    try {
-      console.log(`[STAGE 6/7] Verifying Gmail SMTP (IPv4 forced) to ${host}:${port}...`);
-      
-      const timeoutMs = 8000;
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(`SMTP Connection Timed Out after ${timeoutMs / 1000}s (Outbound TCP ports 465/587 blocked by cloud host).`));
-        }, timeoutMs);
-      });
-
-      const sendPromise = (async () => {
-        await transporter.verify();
-        console.log(`✅ [STAGE 6.1] Gmail SMTP transporter verified successfully.`);
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`✅ [STAGE 6.2] sendMail() succeeded. MessageID: ${info.messageId}`);
-        return info;
-      })();
-
-      const info = await Promise.race([sendPromise, timeoutPromise]);
-      console.log(`✅ [STAGE 6 COMPLETE] Email dispatched via Gmail SMTP to ${toEmail}`);
-      return { success: true, messageId: info.messageId, provider: 'SMTP' };
-    } catch (smtpErr) {
-      console.warn(`⚠️ [STAGE 6 WARN] Gmail SMTP dispatch failed: ${smtpErr.message}`);
-      
-      // If Resend REST API key is available, automatically failover to HTTPS Port 443
-      if (resendKey) {
-        console.log(`🔄 [FAILOVER] Automatically switching to Resend REST API over HTTPS Port 443...`);
-      } else {
-        throw new Error(`Gmail SMTP Error: ${smtpErr.message}`);
-      }
-    }
-  }
-
-  // -------------------------------------------------------------
-  // STRATEGY 2: HTTPS REST API Fallback (Resend over Port 443)
+  // STRATEGY 1: HTTPS REST API (Preferred on Cloud Hosting like Render)
   // -------------------------------------------------------------
   if (resendKey) {
     const fromSender = process.env.RESEND_FROM_EMAIL || 'NutriTrack Pro <onboarding@resend.dev>';
@@ -177,9 +106,74 @@ export async function sendOtpEmail(toEmail, otpCode) {
       }
     } catch (apiErr) {
       console.error(`❌ [HTTPS API DISPATCH FAILED]:`, apiErr.message);
-      throw new Error(`HTTPS API Dispatch Error: ${apiErr.message}`);
+      if (!emailUser) throw new Error(`HTTPS API Dispatch Error: ${apiErr.message}`);
     }
   }
 
-  throw new Error('No valid email provider configured or reachable. Please check SMTP credentials or add RESEND_API_KEY.');
+  // -------------------------------------------------------------
+  // STRATEGY 2: Gmail SMTP via Nodemailer (IPv4 Enforced)
+  // -------------------------------------------------------------
+  if (emailUser && emailPass) {
+    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const port = parseInt(process.env.SMTP_PORT || '465', 10);
+    const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : (port === 465);
+    const fromAddress = process.env.EMAIL_FROM || `"NutriTrack Pro" <${emailUser}>`;
+
+    console.log(`[SMTP DIAGNOSTIC 1/5] Target Host: ${host} | Port: ${port} | Secure: ${secure}`);
+    console.log(`[SMTP DIAGNOSTIC 2/5] Enforcing IPv4 (family: 4) socket connection...`);
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: {
+        user: emailUser,
+        pass: emailPass
+      },
+      family: 4, // FORCE IPv4 ONLY to eliminate ENETUNREACH IPv6 errors on cloud containers
+      connectionTimeout: 5000,
+      greetingTimeout: 3000,
+      socketTimeout: 6000,
+      tls: {
+        rejectUnauthorized: true,
+        minVersion: 'TLSv1.2'
+      }
+    });
+
+    const mailOptions = {
+      from: fromAddress,
+      to: toEmail,
+      subject,
+      text: textContent,
+      html: htmlContent
+    };
+
+    try {
+      console.log(`[SMTP DIAGNOSTIC 3/5] Verifying SMTP connection & auth credentials...`);
+      
+      const timeoutMs = 6000;
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Gmail SMTP Connection Timed Out (${timeoutMs / 1000}s). Note: Render free tier blocks outbound TCP ports 465/587. Add RESEND_API_KEY in Render Environment Variables for instant HTTPS delivery.`));
+        }, timeoutMs);
+      });
+
+      const sendPromise = (async () => {
+        await transporter.verify();
+        console.log(`✅ [SMTP DIAGNOSTIC 4/5] Transporter verified successfully. Sending mail...`);
+        const info = await transporter.sendMail(mailOptions);
+        console.log(`✅ [SMTP DIAGNOSTIC 5/5] sendMail() succeeded. MessageID: ${info.messageId}`);
+        return info;
+      })();
+
+      const info = await Promise.race([sendPromise, timeoutPromise]);
+      console.log(`✅ [STAGE 6 COMPLETE] Email dispatched via Gmail SMTP to ${toEmail}`);
+      return { success: true, messageId: info.messageId, provider: 'SMTP' };
+    } catch (smtpErr) {
+      console.error(`❌ [SMTP DIAGNOSTIC FAILED] ${smtpErr.message}`);
+      throw new Error(smtpErr.message);
+    }
+  }
+
+  throw new Error('No valid email provider configured. Add RESEND_API_KEY or SMTP credentials to environment variables.');
 }
