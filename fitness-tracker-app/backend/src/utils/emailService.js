@@ -5,36 +5,50 @@ export function verifyEmailProviderSetup() {
   const pass = process.env.SMTP_APP_PASSWORD;
 
   if (!email || !pass) {
-    console.error('❌ [GMAIL SMTP ERROR] SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is missing.');
+    console.error('❌ [EMAIL CONFIG ERROR] SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is missing.');
     return { valid: false, maskedUser: email || 'NOT_SET' };
   }
 
+  const masked = email.length > 5 ? `${email.substring(0, 4)}***` : '***';
   console.log(`📧 [EMAIL PROVIDER]: Nodemailer Gmail SMTP (smtp.gmail.com:465)`);
-  console.log(`👤 [GMAIL USER]: ${email}`);
-  return { valid: true, maskedUser: email };
+  console.log(`👤 [GMAIL USER LOADED]: ${masked}`);
+  return { valid: true, maskedUser: masked };
 }
 
 /**
- * Sends OTP Email via Nodemailer using Gmail SMTP
+ * Sends OTP Email via Nodemailer using Gmail SMTP with a strict 8-second timeout guarantee
  */
 export async function sendOtpEmail(toEmail, otpCode) {
   const emailUser = process.env.SMTP_EMAIL;
   const emailPass = process.env.SMTP_APP_PASSWORD;
 
-  console.log(`🔑 [OTP GENERATED] To: ${toEmail} | Code: [ ${otpCode} ]`);
+  console.log(`\n========================================`);
+  console.log(`[STAGE 5/7] Initiating SMTP Email Dispatch...`);
+  console.log(`📧 Target Recipient: ${toEmail}`);
+  console.log(`🔑 Verification OTP Code: [ ${otpCode} ]`);
+  console.log(`========================================\n`);
 
   if (!emailUser || !emailPass) {
-    throw new Error('SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is not configured.');
+    const missingErr = 'SMTP_EMAIL or SMTP_APP_PASSWORD environment variable is not configured in process.env.';
+    console.error(`❌ [STAGE 5 FAILED] ${missingErr}`);
+    throw new Error(missingErr);
   }
 
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = parseInt(process.env.SMTP_PORT || '465', 10);
+  const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : (port === 465);
+
   const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    host,
+    port,
+    secure,
     auth: {
       user: emailUser,
       pass: emailPass
-    }
+    },
+    connectionTimeout: 6000, // 6s connection timeout
+    greetingTimeout: 4000,   // 4s greeting timeout
+    socketTimeout: 8000      // 8s socket idle timeout
   });
 
   const subject = 'NutriTrack Pro - Your 6-Digit Verification Code';
@@ -71,20 +85,39 @@ export async function sendOtpEmail(toEmail, otpCode) {
 
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
+  const fromAddress = process.env.EMAIL_FROM || `"NutriTrack Pro" <${emailUser}>`;
+
   const mailOptions = {
-    from: `"NutriTrack Pro" <${emailUser}>`,
+    from: fromAddress,
     to: toEmail,
-    subject: subject,
+    subject,
     text: textContent,
     html: htmlContent
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ [GMAIL SMTP DISPATCH SUCCESS] ID: ${info.messageId} -> ${toEmail}`);
+    console.log(`[STAGE 6/7] Verifying SMTP connection to ${host}:${port}...`);
+
+    const timeoutMs = 8000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`SMTP Connection Timed Out after ${timeoutMs / 1000}s. Note: Render free tier blocks outbound TCP ports 465/587. If hosted on Render, please add RESEND_API_KEY for instant HTTPS delivery.`));
+      }, timeoutMs);
+    });
+
+    const sendPromise = (async () => {
+      await transporter.verify();
+      console.log(`✅ [STAGE 6.1] Transporter verified successfully.`);
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`✅ [STAGE 6.2] sendMail() succeeded. MessageID: ${info.messageId}`);
+      return info;
+    })();
+
+    const info = await Promise.race([sendPromise, timeoutPromise]);
+    console.log(`✅ [STAGE 6 COMPLETE] Email sent successfully to ${toEmail}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ [GMAIL SMTP DISPATCH FAILED] (To: ${toEmail}):`, err.message);
-    throw new Error(`Gmail SMTP Dispatch Failed: ${err.message}`);
+    console.error(`❌ [STAGE 6 FAILED] Email Dispatch Error:`, err.message);
+    throw new Error(`Email Dispatch Error: ${err.message}`);
   }
 }

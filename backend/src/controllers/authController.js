@@ -213,36 +213,49 @@ export const me = async (req, res) => {
 // Step 1: Send 6-Digit Email OTP
 export const sendOtp = async (req, res) => {
   try {
+    console.log(`\n========================================`);
+    console.log(`[STAGE 1/7] OTP Request Received.`);
+    
     const { email } = req.body;
     const cleanEmail = String(email || '').trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+    console.log(`[STAGE 1/7] Target email normalized: "${cleanEmail}"`);
+
     if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      console.warn(`❌ [STAGE 1 FAILED] Invalid email format: "${cleanEmail}"`);
       return res.status(400).json({ error: 'Please enter a valid email address' });
     }
 
+    console.log(`[STAGE 2/7] Searching for user in database...`);
     const user = await withDbRetry(() => prisma.user.findUnique({
       where: { email: cleanEmail },
       select: { id: true, email: true, otpLockoutUntil: true }
     }));
 
     if (!user) {
+      console.warn(`❌ [STAGE 2 FAILED] No account found with email: "${cleanEmail}"`);
       logSecurityEvent('OTP_REQUEST_UNKNOWN_EMAIL', { email: cleanEmail });
       return res.status(400).json({ error: 'No account exists with this email address.' });
     }
 
+    console.log(`✅ [STAGE 2 COMPLETE] User found. ID: ${user.id}`);
+
     if (user.otpLockoutUntil && user.otpLockoutUntil > new Date()) {
       const minsRemaining = Math.ceil((user.otpLockoutUntil.getTime() - Date.now()) / (60 * 1000));
+      console.warn(`❌ [STAGE 2 LOCKED] Account locked for ${minsRemaining} mins.`);
       return res.status(400).json({ 
         error: `Too many failed attempts. Verification is locked for ${minsRemaining} minutes.` 
       });
     }
 
+    console.log(`[STAGE 3/7] Generating 6-digit cryptographic OTP...`);
     const otpCode = crypto.randomInt(100000, 999999).toString();
     const otpHash = crypto.createHash('sha256').update(otpCode).digest('hex');
+    console.log(`✅ [STAGE 3 COMPLETE] OTP Code generated successfully.`);
 
-    // Save OTP to DB first so it's valid for verification
-    await prisma.user.update({
+    console.log(`[STAGE 4/7] Storing OTP hash & expiration in database...`);
+    await withDbRetry(() => prisma.user.update({
       where: { id: user.id },
       data: {
         otpHash,
@@ -250,21 +263,24 @@ export const sendOtp = async (req, res) => {
         otpAttempts: 0,
         otpLockoutUntil: null
       }
-    });
+    }));
+    console.log(`✅ [STAGE 4 COMPLETE] OTP saved in DB for User ID: ${user.id}`);
 
-    // Deliver email via SMTP and verify delivery acknowledgment
+    // Deliver email via SMTP and handle failures with strict timeout
     try {
       await sendOtpEmail(user.email, otpCode);
       logSecurityEvent('OTP_GENERATED_AND_DELIVERED', { userId: user.id, email: user.email });
+      console.log(`[STAGE 7/7] Returning 200 OK JSON response to client.`);
       return res.json({ message: 'Verification code sent to your email.' });
     } catch (emailErr) {
-      console.error(`❌ [EMAIL DISPATCH FAILED] (To: ${user.email}):`, emailErr.message);
+      console.error(`❌ [STAGE 5/6 DISPATCH FAILED] (To: ${user.email}):`, emailErr.message);
       logSecurityEvent('OTP_EMAIL_DELIVERY_FAILED', { userId: user.id, email: user.email, error: emailErr.message });
+      console.log(`[STAGE 7/7] Returning 500 Error JSON response to client.`);
       return res.status(500).json({ error: `Failed to send verification email: ${emailErr.message}` });
     }
 
   } catch (error) {
-    console.error('Send OTP error:', error);
+    console.error('❌ [SEND OTP FATAL UNHANDLED ERROR]:', error);
     return res.status(500).json({ error: error.message || 'Failed to send verification code' });
   }
 };
