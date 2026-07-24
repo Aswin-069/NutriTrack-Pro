@@ -77,8 +77,13 @@ export async function sendOtpEmail(toEmail, otpCode) {
     const senderEmail = process.env.SMTP_EMAIL || 'aswinacharya2006@gmail.com';
     const senderName = 'NutriTrack Pro';
 
+    if (brevoKey.startsWith('xsmtpsib-')) {
+      console.warn(`⚠️ [BREVO KEY WARNING] BREVO_API_KEY starts with 'xsmtpsib-'. You copied an SMTP key instead of an API key!`);
+      console.warn(`👉 Please open Brevo > 'SMTP & API Keys' > click the 'API Keys' tab > copy key starting with 'xkeysib-'.`);
+    }
+
     try {
-      console.log(`[STAGE 6/7] Dispatched via Brevo HTTPS REST API (Port 443)...`);
+      console.log(`[STAGE 6/7] Dispatched via Brevo HTTPS REST API (Port 443)... Key Prefix: ${brevoKey.substring(0, 8)}...`);
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
@@ -100,16 +105,22 @@ export async function sendOtpEmail(toEmail, otpCode) {
       try { resJson = JSON.parse(resText); } catch {}
 
       if (response.ok) {
-        console.log(`✅ [STAGE 6 COMPLETE] Brevo API MessageID: ${resJson.messageId} -> ${toEmail}`);
-        return { success: true, messageId: resJson.messageId, provider: 'BREVO' };
+        console.log(`✅ [STAGE 6 COMPLETE] Brevo API MessageID: ${resJson.messageId || resJson.id} -> ${toEmail}`);
+        return { success: true, messageId: resJson.messageId || resJson.id, provider: 'BREVO' };
       } else {
         const errorDetail = resJson.message || resJson.code || resText || `HTTP ${response.status}`;
         console.error(`❌ [BREVO API REJECTED] (${response.status}):`, errorDetail);
-        throw new Error(`Brevo API Error: ${errorDetail}`);
+        
+        let customHint = '';
+        if (errorDetail.toLowerCase().includes('key not found') || errorDetail.toLowerCase().includes('unauthorized')) {
+          customHint = ' (Ensure you copied from the "API Keys" tab in Brevo, not the "SMTP" tab)';
+        }
+        
+        throw new Error(`Brevo API Error: ${errorDetail}${customHint}`);
       }
     } catch (brevoErr) {
       console.error(`❌ [BREVO API DISPATCH FAILED]:`, brevoErr.message);
-      if (!resendKey) throw new Error(`Brevo HTTPS API Error: ${brevoErr.message}`);
+      if (!resendKey) throw new Error(brevoErr.message);
     }
   }
 
