@@ -1,33 +1,32 @@
 import nodemailer from 'nodemailer';
 
 export function verifyEmailProviderSetup() {
-  const email = process.env.SMTP_EMAIL;
-  const pass = process.env.SMTP_APP_PASSWORD;
+  const brevoKey = process.env.BREVO_API_KEY;
   const resendKey = process.env.RESEND_API_KEY;
+  const email = process.env.SMTP_EMAIL;
 
-  if (!email && !resendKey) {
-    console.error('❌ [EMAIL CONFIG ERROR] Neither SMTP (SMTP_EMAIL) nor Resend (RESEND_API_KEY) environment variables are configured.');
-    return { valid: false, provider: 'NONE' };
+  if (brevoKey) {
+    console.log(`📧 [PRIMARY EMAIL PROVIDER]: Brevo REST API (HTTPS Port 443 - Any Recipient Allowed)`);
+  } else if (resendKey) {
+    console.log(`📧 [EMAIL PROVIDER]: Resend REST API (HTTPS Port 443)`);
+  } else if (email) {
+    console.log(`📧 [EMAIL PROVIDER]: Gmail SMTP (smtp.gmail.com:465)`);
+  } else {
+    console.warn(`⚠️ [EMAIL CONFIG WARNING] No email provider API key configured.`);
   }
 
-  if (resendKey) {
-    console.log(`📧 [PRIMARY EMAIL PROVIDER]: Resend REST API (HTTPS Port 443 - Cloud Egress Unblocked)`);
-  } else if (email && pass) {
-    const masked = email.length > 5 ? `${email.substring(0, 4)}***` : '***';
-    console.log(`📧 [PRIMARY EMAIL PROVIDER]: Nodemailer Gmail SMTP (smtp.gmail.com:465, IPv4 Enforced)`);
-    console.log(`👤 [GMAIL USER LOADED]: ${masked}`);
-  }
-
-  return { valid: true, provider: resendKey ? 'RESEND' : 'SMTP' };
+  return { valid: Boolean(brevoKey || resendKey || email) };
 }
 
 /**
- * Sends OTP Email with comprehensive SMTP diagnostics and instant HTTPS API failover
+ * Sends OTP Email via Brevo REST API over HTTPS Port 443
+ * Allows delivering OTP emails to ANY recipient email address worldwide without domain verification.
  */
 export async function sendOtpEmail(toEmail, otpCode) {
+  const brevoKey = String(process.env.BREVO_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
+  const resendKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
   const emailUser = process.env.SMTP_EMAIL;
   const emailPass = process.env.SMTP_APP_PASSWORD;
-  const resendKey = String(process.env.RESEND_API_KEY || '').trim().replace(/^['"]|['"]$/g, '');
 
   console.log(`\n========================================`);
   console.log(`[STAGE 5/7] Initiating Email Dispatch...`);
@@ -70,7 +69,50 @@ export async function sendOtpEmail(toEmail, otpCode) {
   const textContent = `NutriTrack Pro - Password Reset Code\n\nYour 6-digit verification code is: ${otpCode}\n\nThis code expires in 10 minutes.`;
 
   // -------------------------------------------------------------
-  // STRATEGY 1: HTTPS REST API (Preferred on Cloud Hosting like Render)
+  // STRATEGY 1: Brevo REST API (HTTPS Port 443 - Any Recipient)
+  // -------------------------------------------------------------
+  if (brevoKey) {
+    const senderEmail = process.env.SMTP_EMAIL || 'aswinacharya2006@gmail.com';
+    const senderName = 'NutriTrack Pro';
+
+    try {
+      console.log(`[STAGE 6/7] Dispatched via Brevo HTTPS REST API (Port 443)...`);
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': brevoKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: senderName, email: senderEmail },
+          to: [{ email: toEmail }],
+          subject: subject,
+          htmlContent: htmlContent,
+          textContent: textContent
+        })
+      });
+
+      const resText = await response.text();
+      let resJson = {};
+      try { resJson = JSON.parse(resText); } catch {}
+
+      if (response.ok) {
+        console.log(`✅ [BREVO API DISPATCH SUCCESS] MessageID: ${resJson.messageId} -> ${toEmail}`);
+        return { success: true, messageId: resJson.messageId, provider: 'BREVO' };
+      } else {
+        const errorDetail = resJson.message || resJson.code || resText || `HTTP ${response.status}`;
+        console.error(`❌ [BREVO API REJECTED] (${response.status}):`, errorDetail);
+        throw new Error(`Brevo API Error: ${errorDetail}`);
+      }
+    } catch (brevoErr) {
+      console.error(`❌ [BREVO API DISPATCH FAILED]:`, brevoErr.message);
+      if (!resendKey && !emailUser) throw new Error(`Brevo API Error: ${brevoErr.message}`);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // STRATEGY 2: Resend REST API (HTTPS Port 443)
   // -------------------------------------------------------------
   if (resendKey) {
     const fromSender = process.env.RESEND_FROM_EMAIL || 'NutriTrack Pro <onboarding@resend.dev>';
@@ -105,13 +147,13 @@ export async function sendOtpEmail(toEmail, otpCode) {
         throw new Error(`Resend API Error: ${errorDetail}`);
       }
     } catch (apiErr) {
-      console.error(`❌ [HTTPS API DISPATCH FAILED]:`, apiErr.message);
+      console.error(`❌ [RESEND API DISPATCH FAILED]:`, apiErr.message);
       if (!emailUser) throw new Error(`HTTPS API Dispatch Error: ${apiErr.message}`);
     }
   }
 
   // -------------------------------------------------------------
-  // STRATEGY 2: Gmail SMTP via Nodemailer (IPv4 Enforced)
+  // STRATEGY 3: Gmail SMTP Fallback via Nodemailer (IPv4)
   // -------------------------------------------------------------
   if (emailUser && emailPass) {
     const host = process.env.SMTP_HOST || 'smtp.gmail.com';
@@ -119,61 +161,45 @@ export async function sendOtpEmail(toEmail, otpCode) {
     const secure = process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE === 'true' : (port === 465);
     const fromAddress = process.env.EMAIL_FROM || `"NutriTrack Pro" <${emailUser}>`;
 
-    console.log(`[SMTP DIAGNOSTIC 1/5] Target Host: ${host} | Port: ${port} | Secure: ${secure}`);
-    console.log(`[SMTP DIAGNOSTIC 2/5] Enforcing IPv4 (family: 4) socket connection...`);
-
     const transporter = nodemailer.createTransport({
       host,
       port,
       secure,
-      auth: {
-        user: emailUser,
-        pass: emailPass
-      },
-      family: 4, // FORCE IPv4 ONLY to eliminate ENETUNREACH IPv6 errors on cloud containers
+      auth: { user: emailUser, pass: emailPass },
+      family: 4,
       connectionTimeout: 5000,
       greetingTimeout: 3000,
       socketTimeout: 6000,
-      tls: {
-        rejectUnauthorized: true,
-        minVersion: 'TLSv1.2'
-      }
+      tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2' }
     });
 
-    const mailOptions = {
-      from: fromAddress,
-      to: toEmail,
-      subject,
-      text: textContent,
-      html: htmlContent
-    };
-
     try {
-      console.log(`[SMTP DIAGNOSTIC 3/5] Verifying SMTP connection & auth credentials...`);
-      
       const timeoutMs = 6000;
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          reject(new Error(`Gmail SMTP Connection Timed Out (${timeoutMs / 1000}s). Note: Render free tier blocks outbound TCP ports 465/587. Add RESEND_API_KEY in Render Environment Variables for instant HTTPS delivery.`));
+          reject(new Error(`Gmail SMTP Connection Timed Out (${timeoutMs / 1000}s). Note: Render free tier blocks outbound TCP ports 465/587. Add BREVO_API_KEY in Render Environment Variables for instant HTTPS delivery.`));
         }, timeoutMs);
       });
 
       const sendPromise = (async () => {
         await transporter.verify();
-        console.log(`✅ [SMTP DIAGNOSTIC 4/5] Transporter verified successfully. Sending mail...`);
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`✅ [SMTP DIAGNOSTIC 5/5] sendMail() succeeded. MessageID: ${info.messageId}`);
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: toEmail,
+          subject,
+          text: textContent,
+          html: htmlContent
+        });
         return info;
       })();
 
       const info = await Promise.race([sendPromise, timeoutPromise]);
-      console.log(`✅ [STAGE 6 COMPLETE] Email dispatched via Gmail SMTP to ${toEmail}`);
       return { success: true, messageId: info.messageId, provider: 'SMTP' };
     } catch (smtpErr) {
-      console.error(`❌ [SMTP DIAGNOSTIC FAILED] ${smtpErr.message}`);
+      console.error(`❌ [SMTP DISPATCH FAILED]: ${smtpErr.message}`);
       throw new Error(smtpErr.message);
     }
   }
 
-  throw new Error('No valid email provider configured. Add RESEND_API_KEY or SMTP credentials to environment variables.');
+  throw new Error('No valid email provider configured. Please add BREVO_API_KEY in Render Environment Variables.');
 }
